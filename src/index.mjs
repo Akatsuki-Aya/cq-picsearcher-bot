@@ -1010,7 +1010,9 @@ function originImgConvert(ctx) {
   replyMsg(ctx, lines.join('\n'), false, false);
 }
 
-global.telegramBot = new TelegramBot(global.config.tgConfig.token, {polling: true, request: {proxy: global.config.tgConfig.proxy}});
+global.telegramBot = new TelegramBot(global.config.tgConfig.token, { polling: true,
+  ...(global.config.tgConfig.proxy && { request: { proxy: global.config.tgConfig.proxy } })
+});
 
 global.telegramBot.on('channel_post', async (channel) => {
   let msg = "";
