@@ -2,6 +2,7 @@ export declare interface Config {
     autoUpdateConfig: boolean;
     cqws: Cqw;
     bot: Bot;
+    tgConfig: TgConfig;
     saucenaoHost: string;
     saucenaoApiKey: string;
     whatanimeHost: string;
@@ -258,4 +259,10 @@ declare interface Cqw {
     reconnection: boolean;
     reconnectionAttempts: number;
     reconnectionDelay: number;
+}
+
+declare interface TgConfig {
+    token: string;
+    targetGroup: number;
+    proxy: string;
 }
