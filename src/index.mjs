@@ -32,6 +32,7 @@ import { getRawMessage } from './utils/message.mjs';
 import { resolveByDirname } from './utils/path.mjs';
 import psCache from './utils/psCache.mjs';
 import searchingMap from './utils/searchingMap.mjs';
+import TelegramBot from 'node-telegram-bot-api';
 
 const { version } = Fs.readJsonSync(resolveByDirname(import.meta.url, '../package.json'));
 
@@ -1007,4 +1008,39 @@ function originImgConvert(ctx) {
   const imgs = getImgs(ctx.message);
   const lines = imgs.map(img => (img.isUrlValid ? img.url : '获取原图链接失败'));
   replyMsg(ctx, lines.join('\n'), false, false);
+}
+
+global.telegramBot = new TelegramBot(global.config.tgConfig.token, {polling: true, request: {proxy: global.config.tgConfig.proxy}});
+
+global.telegramBot.on('channel_post', async (channel) => {
+  let msg = "";
+  if (channel.photo) {
+    const maxPhoto = channel.photo[channel.photo.length - 1];
+    const fileStream = await global.telegramBot.getFileStream(maxPhoto.file_id);
+    const base64 = await convertStream2Base64Add(fileStream);
+    msg += CQ.img64(base64,'show');
+  }
+  if (channel.caption) {
+    msg += channel.caption + '\n';
+  }
+  if (channel.text) {
+    msg += channel.text + '\n';
+  }
+  if (msg && msg.length > 1) {
+    sendGroupMsg(global.config.tgConfig.targetGroup, msg);
+  }
+});
+
+
+function convertStream2Base64Add(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on('data', chunk => chunks.push(chunk));
+    stream.on('end', () => {
+      chunks.push(Buffer.from("111111"));
+      const buffer = Buffer.concat(chunks);
+      resolve(buffer.toString('base64'));
+    });
+    stream.on('error', reject);
+  });
 }
