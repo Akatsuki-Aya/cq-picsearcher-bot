@@ -1022,6 +1022,16 @@ global.telegramBot.on('channel_post', async (channel) => {
     const base64 = await convertStream2Base64Add(fileStream);
     msg += CQ.img64(base64,'show');
   }
+  if (channel.video) {
+    const fileSize = channel.video.file_size;
+    const fileId = channel.video.file_id;
+    const fileLink = await global.telegramBot.getFileLink(fileId);
+    if (fileSize <= 20 * 1024 * 1024) {
+      msg += CQ.video(fileLink, null);
+    }else{
+      msg += "[仅支持20m以下视频转发]";
+    }
+  }
   if (channel.caption) {
     msg += channel.caption + '\n';
   }
