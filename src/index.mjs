@@ -1010,8 +1010,9 @@ function originImgConvert(ctx) {
   replyMsg(ctx, lines.join('\n'), false, false);
 }
 
-global.telegramBot = new TelegramBot(global.config.tgConfig.token, { polling: true,
-  ...(global.config.tgConfig.proxy && { request: { proxy: global.config.tgConfig.proxy } })
+global.telegramBot = new TelegramBot(global.config.tgConfig.token, {
+  polling: true,
+  ...(global.config.tgConfig.proxy && { request: { proxy: global.config.tgConfig.proxy } }),
 });
 
 global.telegramBot.on('channel_post', async (channel) => {
@@ -1030,6 +1031,16 @@ global.telegramBot.on('channel_post', async (channel) => {
       msg += CQ.video(fileLink, null);
     }else{
       msg += "[仅支持20m以下视频转发]";
+    }
+  }
+  if (channel.animation) {
+    const fileSize = channel.animation.file_size;
+    const fileId = channel.animation.file_id;
+    const fileLink = await global.telegramBot.getFileLink(fileId);
+    if (fileSize <= 20 * 1024 * 1024) {
+      msg += CQ.img(fileLink);
+    }else {
+      msg += "[仅支持20m以下动图转发]";
     }
   }
   if (channel.caption) {
