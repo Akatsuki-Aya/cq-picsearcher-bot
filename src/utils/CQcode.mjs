@@ -182,6 +182,10 @@ export default class CQ {
     return new CQ('video', { file, cover }).toString();
   }
 
+  static file64(base64,fileName){
+    return new CQ('file', { file: `base64://${base64}`,name:fileName }).toString();
+  }
+
   /**
    * CQ码 分享链接
    * @param {string} url 链接
