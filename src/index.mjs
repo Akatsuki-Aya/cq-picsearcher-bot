@@ -33,6 +33,7 @@ import { resolveByDirname } from './utils/path.mjs';
 import psCache from './utils/psCache.mjs';
 import searchingMap from './utils/searchingMap.mjs';
 import TelegramBot from 'node-telegram-bot-api';
+import mime from "mime";
 
 const { version } = Fs.readJsonSync(resolveByDirname(import.meta.url, '../package.json'));
 
@@ -1026,9 +1027,12 @@ global.telegramBot.on('channel_post', async (channel) => {
   if (channel.video) {
     const fileSize = channel.video.file_size;
     const fileId = channel.video.file_id;
-    const fileLink = await global.telegramBot.getFileLink(fileId);
     if (fileSize <= 20 * 1024 * 1024) {
-      msg += CQ.video(fileLink, null);
+      const fileStream = await global.telegramBot.getFileStream(fileId);
+      const base64 = await convertStream2Base64Add(fileStream);
+      const fileType = channel.video.mime_type;
+      const fileName = channel.video.file_name ? channel.video.file_name : fileId + "." + mime.getExtension(fileType);
+      msg += CQ.file64(base64,fileName);
     }else{
       msg += "[仅支持20m以下视频转发]";
     }
@@ -1036,9 +1040,12 @@ global.telegramBot.on('channel_post', async (channel) => {
   if (channel.animation) {
     const fileSize = channel.animation.file_size;
     const fileId = channel.animation.file_id;
-    const fileLink = await global.telegramBot.getFileLink(fileId);
     if (fileSize <= 20 * 1024 * 1024) {
-      msg += CQ.img(fileLink);
+      const fileStream = await global.telegramBot.getFileStream(fileId);
+      const base64 = await convertStream2Base64Add(fileStream);
+      const fileType = channel.animation.mime_type;
+      const fileName = channel.animation.file_name ? channel.animation.file_name : fileId + "." + mime.getExtension(fileType);
+      msg += CQ.file64(base64,fileName);
     }else {
       msg += "[仅支持20m以下动图转发]";
     }
