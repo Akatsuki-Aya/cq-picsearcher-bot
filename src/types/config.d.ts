@@ -106,6 +106,27 @@ declare interface Chatgpt {
     overrides: any[];
     customAPI: string;
     customChatAPI: string;
+    social: Social;
+}
+
+declare interface Social {
+    enable: boolean;
+    groups: (number | string)[];
+    privateUsers: (number | string)[];
+    persona: string;
+    contextMessages: number;
+    messageMaxChars: number;
+    maxReplyChars: number;
+    debounceMs: number;
+    decisionIntervalMs: number;
+    replyIntervalMs: number;
+    requestTimeoutMs: number;
+    maxWaitSeconds: number;
+    maxAutoTurns: number;
+    idleExpireMs: number;
+    dailyDecisionLimit: number;
+    dailyReplyLimit: number;
+    maxSessions: number;
 }
 
 declare type AdditionParam = Push;

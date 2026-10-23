@@ -26,6 +26,7 @@
 - 哔哩哔哩推送
 - 语言库（自动回复）
 - ChatGPT
+- [AI 社交仿真（直接调用大模型 API）](docs/ai-social.md)：自主决定是否发言、等待多久、回复谁
 - VITS 语音合成
 
 详细说明请移步 [wiki](https://github.com/Tsuk1ko/cq-picsearcher-bot/wiki)
