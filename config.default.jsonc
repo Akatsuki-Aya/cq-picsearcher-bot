@@ -361,7 +361,33 @@
       // 自定义 API 地址，如 https://api.openai.com/v1/completions
       "customAPI": "",
       // 自定义 Chat completion API 地址，如 https://api.openai.com/v1/chat/completions
-      "customChatAPI": ""
+      "customChatAPI": "",
+      // AI 社交仿真：独立于上面的 enable，复用 apiKey/model/customChatAPI；仅支持 Chat Completions 格式
+      "social": {
+        "enable": false,
+        // 明确开启的 QQ 群、私聊 QQ 号；空数组表示不启用任何会话
+        "groups": [],
+        "privateUsers": [],
+        "persona": "你是竹竹，一个温和、有幽默感的 AI 群友。自然参与感兴趣的话题，不刷屏，不强行接话。",
+        // 每个会话保留的消息数、每条输入及回复字符上限
+        "contextMessages": 30,
+        "messageMaxChars": 1000,
+        "maxReplyChars": 500,
+        // 合并连续消息的等待时间、同会话模型决策/发言的最小间隔（毫秒）
+        "debounceMs": 3000,
+        "decisionIntervalMs": 15000,
+        "replyIntervalMs": 30000,
+        "requestTimeoutMs": 60000,
+        // 模型可选择延迟发言或等待后重新决策；没有新消息时最多自动唤醒次数
+        "maxWaitSeconds": 300,
+        "maxAutoTurns": 2,
+        // 最近一条人类消息超过此时间后不再主动唤醒（毫秒）
+        "idleExpireMs": 600000,
+        // 社交模式全局每日决策/发言尝试上限（包含失败），按进程本地日期重置；重启清零
+        "dailyDecisionLimit": 200,
+        "dailyReplyLimit": 50,
+        "maxSessions": 100
+      }
     },
     // 点赞（需要使用的机器人客户端支持点赞功能）
     "like": {

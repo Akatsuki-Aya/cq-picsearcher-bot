@@ -15,6 +15,7 @@ import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
 import saucenao, { snDB } from './plugin/saucenao.mjs';
 import sendSetu from './plugin/setu.mjs';
+import social, { resetSocialGroup } from './plugin/social/index.mjs';
 import vits from './plugin/vits.mjs';
 import whatanime from './plugin/whatanime.mjs';
 import { loadConfig } from './setup/config.mjs';
@@ -233,6 +234,9 @@ async function commonHandle(e, context) {
   // 反哔哩哔哩小程序
   if (await bilibiliHandler(context)) return true;
 
+  // Social mode consumes ordinary conversation only after explicit commands/plugins.
+  if (social(context)) return true;
+
   return false;
 }
 
@@ -241,6 +245,16 @@ function handleAdminMsg(context) {
   if (!isSendByAdmin(context)) return false;
 
   const args = parseArgs(context.message);
+
+  if ('social-reset' in args) {
+    if (context.message_type !== 'group') {
+      replyMsg(context, '请在需要清除 AI 会话的 QQ 群内发送 --social-reset');
+    } else {
+      const cleared = resetSocialGroup(context.group_id);
+      replyMsg(context, cleared ? '已清除本群 AI 会话，并取消待发送回复和定时唤醒。' : '本群暂无 AI 会话记录。');
+    }
+    return true;
+  }
 
   // 允许加群
   const group = args['add-group'];
