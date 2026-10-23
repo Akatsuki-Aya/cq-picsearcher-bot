@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { requestDecision } from '../src/plugin/social/api.mjs';
 import { isAllowed, parseDecision, settings, SocialEngine } from '../src/plugin/social/engine.mjs';
+import { loadPersona } from '../src/plugin/social/persona.mjs';
 
 const context = (overrides = {}) => ({
   message_type: 'group', group_id: 100, user_id: 123, self_id: 999,
@@ -21,6 +25,7 @@ function harness(options = {}) {
     debounceMs: 100, decisionIntervalMs: 1000, replyIntervalMs: 1000, ...options.config };
   const engine = new SocialEngine({
     getConfig: () => config,
+    getPersona: options.getPersona,
     request: async messages => {
       calls.push(messages);
       return options.request ? options.request(messages) : silent;
@@ -354,4 +359,47 @@ test('group reset invalidates in-flight results even after a new session starts'
   assert.equal(h.sent.length, 0);
   assert.equal(h.timers.size, 0);
   assert.deepEqual(JSON.parse(h.calls[1][1].content).messages.map(m => m.text), ['新的开始']);
+});
+
+test('persona Markdown supports UTF-8, live edits, and fallback for missing or empty files', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'cqps-persona-'));
+  const personaFile = join(directory, '人设.md');
+  const errors = [];
+  const config = { personaFile, persona: '备用人设' };
+  try {
+    assert.equal(await loadPersona({ persona: '原有配置' }), '原有配置');
+    assert.equal(await loadPersona(config, message => errors.push(message)), '备用人设');
+    await writeFile(personaFile, '\uFEFF# 测试人设\n\n- 轻松聊天\n', 'utf8');
+    assert.equal(await loadPersona(config), '# 测试人设\n\n- 轻松聊天');
+    await writeFile(personaFile, '# 修改后的人设', 'utf8');
+    assert.equal(await loadPersona(config), '# 修改后的人设');
+    await writeFile(personaFile, ' \n ', 'utf8');
+    assert.equal(await loadPersona(config, message => errors.push(message)), '备用人设');
+    assert.equal(errors.length, 2);
+    assert.equal(await loadPersona({ personaFile: '', persona: '只用文本' }), '只用文本');
+    assert.match(await loadPersona({ personaFile: 'roles/persona.md' }), /大肥鱼/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('resolved Markdown replaces inline persona in the model system prompt', async () => {
+  const h = harness({ config: { persona: 'INLINE_ONLY' }, getPersona: async () => '# FILE_PERSONA' });
+  h.engine.observe(context());
+  await h.next();
+  assert.match(h.calls[0][0].content, /# FILE_PERSONA/);
+  assert.equal(h.calls[0][0].content.includes('INLINE_ONLY'), false);
+  assert.equal(h.config.persona, 'INLINE_ONLY');
+});
+
+test('reset while loading persona cannot start an obsolete model request', async () => {
+  let resolve;
+  const h = harness({ getPersona: () => new Promise(done => { resolve = done; }) });
+  h.engine.observe(context());
+  const pending = h.next();
+  h.engine.resetGroup(100);
+  resolve('人设');
+  await pending;
+  assert.equal(h.calls.length, 0);
+  assert.equal(h.timers.size, 0);
 });

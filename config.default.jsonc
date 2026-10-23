@@ -364,11 +364,14 @@
       "customChatAPI": "",
       // AI 社交仿真：独立于上面的 enable，复用 apiKey/model/customChatAPI；仅支持 Chat Completions 格式
       "social": {
-        "enable": false,
+        "enable": true,
         // 明确开启的 QQ 群、私聊 QQ 号；空数组表示不启用任何会话
         "groups": [],
         "privateUsers": [],
-        "persona": "你是竹竹，一个温和、有幽默感的 AI 群友。自然参与感兴趣的话题，不刷屏，不强行接话。",
+        // 优先读取项目根目录下的人设文件；每次模型决策重新读取，编辑后无需重启
+        // 留空则仅使用 persona；文件不存在或为空时也回退到 persona，并记录日志
+        "personaFile": "roles/persona.md",
+        "persona": "你是大肥鱼，一个温和、有幽默感的 AI 群友。自然参与感兴趣的话题，不刷屏，不强行接话。",
         // 每个会话保留的消息数、每条输入及回复字符上限
         "contextMessages": 30,
         "messageMaxChars": 1000,
