@@ -25,6 +25,7 @@
     "enable": true,
     "groups": [123456789],
     "privateUsers": [],
+    "personaFile": "roles/persona.md",
     "persona": "你是竹竹，一个温和、有幽默感的 AI 群友。喜欢动漫和游戏，回答自然简短，没必要时就潜水。"
   }
 }
@@ -36,9 +37,23 @@
 
 `groups` 和 `privateUsers` 是明确启用的群号和私聊 QQ 号，空数组表示不启用任何对应会话。还需开启原项目的 `bot.enableGM` / `bot.enablePM`，并满足全局群白名单、封禁规则、ChatGPT 群黑白名单。调试模式沿用仅处理管理员消息的行为。
 
-社交模式复用 `bot.chatgpt` 的 `apiKey`、`model`、`customChatAPI`、`organization`、`maxTokens`、`additionParams`，以及 `bot.proxy`。人设单独使用 `social.persona`；不读取命令正则对应的 `overrides`，也不拼入普通指令的 `prependMessages`。额外参数中的流式输出、多候选和工具调用选项会被固定或移除，以保持决策协议一致。
+社交模式复用 `bot.chatgpt` 的 `apiKey`、`model`、`customChatAPI`、`organization`、`maxTokens`、`additionParams`，以及 `bot.proxy`。人设优先读取 `social.personaFile`，备用文本为 `social.persona`；不读取命令正则对应的 `overrides`，也不拼入普通指令的 `prependMessages`。额外参数中的流式输出、多候选和工具调用选项会被固定或移除，以保持决策协议一致。
 
 配置重载会清空社交上下文和定时任务，旧请求返回后不会继续发言。更改配置后可重启机器人，或使用项目已有的配置重载方式。
+
+## 用 Markdown 编写人设
+
+默认读取项目根目录下的 `roles/persona.md`，直接用文本编辑器修改即可，也可以将自己的角色卡放到 `roles/小鲸鱼.md`，再配置：
+
+```jsonc
+"personaFile": "roles/小鲸鱼.md"
+```
+
+路径相对于项目根目录解析，不受启动目录影响。文件使用 UTF-8 编码，可以直接写标题、列表和多行文字，不需要 JSON 转义。人设文件内容优先于 `persona`，不会把两者拼在一起；将 `personaFile` 设为 `""` 则恢复仅使用 `persona`。
+
+每次模型决策前重新读取文件，修改后下一次决策生效；已生成的待发送回复不会因为文件修改而自动取消。若希望同时丢弃旧话题和待发送内容，在群内执行 `--social-reset`。更换配置中的文件路径需要重载配置或重启，单纯编辑文件内容不需要。
+
+文件不存在、无法读取或内容为空时，记录本地日志并回退到 `persona`。角色卡写身份、性格、语气和回复示例即可，不要加入 DSH/MCP 调用、`[SILENT]` 输出或改变 JSON 决策格式的要求。文件内容会随每次决策发送给模型，长人设仍然会占用上下文和 token。
 
 ## 节奏与用量
 

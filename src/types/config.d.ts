@@ -113,6 +113,7 @@ declare interface Social {
     enable: boolean;
     groups: (number | string)[];
     privateUsers: (number | string)[];
+    personaFile: string;
     persona: string;
     contextMessages: number;
     messageMaxChars: number;

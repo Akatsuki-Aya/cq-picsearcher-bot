@@ -87,6 +87,7 @@ replyToMessageId 可选当前记录中的消息 ID（字符串）引用回复。
 export class SocialEngine {
   constructor({
     getConfig,
+    getPersona,
     request,
     send,
     allowed = () => true,
@@ -95,7 +96,7 @@ export class SocialEngine {
     setTimer = setTimeout,
     clearTimer = clearTimeout,
   }) {
-    Object.assign(this, { getConfig, request, send, allowed, log, now, setTimer, clearTimer });
+    Object.assign(this, { getConfig, getPersona, request, send, allowed, log, now, setTimer, clearTimer });
     this.sessions = new Map();
     this.usage = { day: '', decisions: 0, replies: 0 };
   }
@@ -208,6 +209,8 @@ export class SocialEngine {
     const revision = state.revision;
     const history = state.history.slice();
     try {
+      if (this.getPersona) config.persona = await this.getPersona(config);
+      if (!this.valid(state) || state.revision !== revision) return;
       const response = await this.request(buildMessages(state, config, this.now()));
       if (!this.valid(state) || state.revision !== revision) return;
       const decision = parseDecision(response, history, config);

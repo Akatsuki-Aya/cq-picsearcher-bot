@@ -3,10 +3,12 @@ import emitter from '../../utils/emitter.mjs';
 import logger from '../../utils/logger.mjs';
 import { requestDecision } from './api.mjs';
 import { SocialEngine } from './engine.mjs';
+import { loadPersona } from './persona.mjs';
 
 const contains = (list, id) => Array.from(list || []).some(item => String(item) === String(id));
 const engine = new SocialEngine({
   getConfig: () => global.config.bot.chatgpt.social,
+  getPersona: loadPersona,
   request: messages =>
     requestDecision(AxiosProxy.post, global.config.bot.chatgpt, global.config.bot.chatgpt.social, messages),
   send: (context, message) => global.replyMsg(context, message),
