@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { requestDecision } from '../src/plugin/social/api.mjs';
+import { errorDetails, writeDiagnostic } from '../src/plugin/social/diagnostics.mjs';
 import { isAllowed, parseDecision, settings, SocialEngine } from '../src/plugin/social/engine.mjs';
 import { loadPersona } from '../src/plugin/social/persona.mjs';
 
@@ -21,6 +22,7 @@ function harness(options = {}) {
   const calls = [];
   const sent = [];
   const errors = [];
+  const traces = [];
   const config = { enable: true, groups: [100, 200], privateUsers: [123],
     debounceMs: 100, decisionIntervalMs: 1000, replyIntervalMs: 1000, ...options.config };
   const engine = new SocialEngine({
@@ -35,6 +37,7 @@ function harness(options = {}) {
       return options.send ? options.send(ctx, message) : { retcode: 0, data: { message_id: 900 } };
     },
     allowed: options.allowed,
+    trace: (ctx, event, details) => traces.push({ event, ...details }),
     log: (...args) => errors.push(args),
     now: () => time,
     setTimer: (callback, delay) => {
@@ -50,7 +53,7 @@ function harness(options = {}) {
     time = Math.max(time, entry[1].due);
     await entry[1].callback();
   };
-  return { config, engine, calls, sent, errors, timers, next, advance: ms => { time += ms; } };
+  return { config, engine, calls, sent, errors, traces, timers, next, advance: ms => { time += ms; } };
 }
 
 test('only explicitly allowed conversations, never self messages or guilds', () => {
@@ -402,4 +405,77 @@ test('reset while loading persona cannot start an obsolete model request', async
   await pending;
   assert.equal(h.calls.length, 0);
   assert.equal(h.timers.size, 0);
+});
+
+test('diagnostics distinguish model silence from quota blocking and filtering', async () => {
+  const h = harness({ config: { dailyDecisionLimit: 1 } });
+  h.engine.observe(context({ group_id: 333 }));
+  assert.ok(h.traces.some(t => t.event === 'filtered' && t.reason === 'group_not_enabled'));
+  h.engine.observe(context());
+  await h.next();
+  assert.ok(h.traces.some(t => t.event === 'decision' && t.action === 'silent'));
+  h.engine.observe(context({ message_id: 2 }));
+  while (h.timers.size) await h.next();
+  assert.ok(h.traces.some(t => t.event === 'quota_reached' && t.decisions === 1 && t.decisionLimit === 1));
+  assert.equal(h.calls.length, 1);
+});
+
+test('diagnostics explain stale results and report the pending request phase', async () => {
+  let resolve;
+  const h = harness({ request: () => new Promise(done => { resolve = done; }) });
+  h.engine.observe(context());
+  const pending = h.next();
+  h.advance(5000);
+  h.engine.observe(context({ message_id: 2 }));
+  assert.ok(h.traces.some(t => t.event === 'busy' && t.phase === 'request' && t.busyForMs === 5000));
+  resolve(speak());
+  await pending;
+  assert.ok(h.traces.some(t => t.event === 'discarded' && t.reason === 'new_messages' && t.stage === 'request'));
+});
+
+test('diagnostics identify a stuck send and a failed QQ retcode', async () => {
+  let resolve;
+  const h = harness({ request: () => speak(), send: () => new Promise(done => { resolve = done; }) });
+  h.engine.observe(context());
+  await h.next();
+  const pending = h.next();
+  h.advance(60000);
+  h.engine.observe(context({ message_id: 2 }));
+  assert.ok(h.traces.some(t => t.event === 'busy' && t.phase === 'send' && t.busyForMs === 60000));
+  resolve({ retcode: 100, message: 'PRIVATE_SERVER_MESSAGE' });
+  await pending;
+  assert.ok(h.traces.some(t => t.event === 'send_finished' && t.success === false && t.retcode === 100));
+  assert.equal(JSON.stringify(h.traces).includes('PRIVATE_SERVER_MESSAGE'), false);
+});
+
+test('diagnostics exclude chat content, raw exceptions, request credentials and model responses', async () => {
+  const h = harness({ request: () => {
+    const error = new Error('SECRET_API_KEY and CHAT_CONTENT');
+    error.code = 'ECONNABORTED';
+    error.response = { status: 429, data: 'SECRET_RESPONSE' };
+    error.config = { headers: { Authorization: 'SECRET_API_KEY' } };
+    throw error;
+  } });
+  h.engine.observe(context({ message: 'CHAT_CONTENT', sender: { nickname: 'SECRET_NAME' } }));
+  await h.next();
+  const text = JSON.stringify([h.traces, h.errors]);
+  for (const secret of ['SECRET_API_KEY', 'CHAT_CONTENT', 'SECRET_RESPONSE', 'SECRET_NAME']) {
+    assert.equal(text.includes(secret), false);
+  }
+  assert.ok(h.traces.some(t => t.event === 'decision_failed' && t.code === 'ECONNABORTED' && t.httpStatus === 429));
+  assert.equal(errorDetails(new Error('目标用户不在当前会话上下文中')).reason, 'unknown_target');
+});
+
+test('diagnostic output can be disabled independently and carries only correlation metadata', () => {
+  const output = [];
+  const write = (...args) => output.push(args);
+  const ctx = context({ message: 'SECRET_TEXT', sender: { nickname: 'SECRET_NAME' } });
+  writeDiagnostic(false, ctx, 'received', {}, write);
+  assert.equal(output.length, 0);
+  writeDiagnostic(true, ctx, 'received', {}, write);
+  const record = JSON.parse(output[0][1]);
+  assert.equal(record.session, 'group:100');
+  assert.equal(record.messageId, '1');
+  assert.equal(record.event, 'received');
+  assert.equal(JSON.stringify(output).includes('SECRET'), false);
 });
