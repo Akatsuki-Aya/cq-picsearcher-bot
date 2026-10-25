@@ -98,6 +98,35 @@
 
 ## 代码与验证
 
+### 排查群里不回复
+
+`bot.chatgpt.social.diagnostics` 默认 `true`，独立于 `bot.debug`。**不要为查看社交日志开启 `bot.debug`**，后者会限制仅处理管理员消息，并可能输出聊天原文。
+
+更新代码后需重启机器人。PM2 部署可运行 `pm2 logs cqps --lines 200` 查看（进程名以 `ecosystem.config.js` 为准）；前台运行则直接看终端输出。诊断行格式为 `[social] {JSON}`，包含 UTC 时间 `time`、`session`（如 `group:群号`）、消息 ID 和事件。可按 `[social]` 和对应群号筛选。日志包含群号或私聊账号，分享日志前可替换这些 ID；不记录聊天正文、人设全文、模型回复或 API Key，也不记录接口返回的原始错误文本。
+
+| event / reason | 表示什么 |
+| --- | --- |
+| `config_loaded` | 启动/重载后的功能开关、启用群数量、私聊数量、是否有密钥、每日限额；不打印名单和密钥 |
+| `received` | 消息到达通用处理入口；若某群完全没有这项，先检查 QQ 连接、群消息开关和客户端事件上报 |
+| `upstream_handled` | 被前置逻辑处理；`reason` 可为 `corpus`、`chatgpt_command`、`banned`、`ignore_regexp`、`global_group_whitelist` 等 |
+| `filtered` / `access_denied` | 未进入社交模式；例如 `group_not_enabled`（不在 social.groups）、`missing_api_key`、`non_text_cq`（图片/表情等）、`debug_admin_only` |
+| `observed` | 已进入社交会话，`historyCount` 为当前历史条数 |
+| `scheduled` / `cooldown` | 已安排任务或等待冷却；看 `delayMs` / `remainingMs`，单位毫秒 |
+| `request_started` / `request_finished` | 开始/完成模型请求；`requestRevision` 可关联请求对应的旧消息版本 |
+| `decision` | 模型实际决定；`action=silent` 才表示模型主动沉默，`wait` 为等待，`speak` 为准备发言 |
+| `discarded`，`reason=new_messages` | 请求期间又来了新消息，旧结果被程序丢弃；连续出现可解释活跃群一直不说话 |
+| `timer_cancelled` | 延迟发言或唤醒被新消息取消，`kind=send` 为取消待发回复 |
+| `quota_reached` | 达到全局每日额度，显示当天 `decisions/replies` 和对应上限；不是模型选择沉默 |
+| `busy` | 正等待任务返回；`phase=request` 为模型请求，`phase=send` 为 QQ 发送，`busyForMs` 为忙碌时长 |
+| `decision_failed` | API / 决策解析失败；看 `phase`、`httpStatus`、`code`、`reason`，例如 `unknown_quote` 为模型引用了不存在的消息 |
+| `send_started` / `send_finished` | QQ 发送开始/返回；看 `success` 和数值 `retcode`，没有返回则只看到开始日志 |
+| `task_failed` | 定时任务或 QQ 发送异常；保留安全的错误类型/错误码，不输出原始错误内容 |
+| `wake_limit` / `expired` / `reset` | 自动唤醒次数耗尽、会话空闲过期，或管理员/重载清除会话 |
+
+例如不断出现 `busy phase=send busyForMs=...` 且时间持续增加，表示发送等待尚未结束；出现 `decision action=silent` 而没有错误，则是模型主动不接话。没有新消息时不会持续打印忙碌日志，可以结合最后一条 `request_started` / `send_started` 判断停在哪一步。诊断只记录现有行为，不会改变限额、回复策略或自动修复挂起任务。
+
+排查结束后可设置 `"diagnostics": false` 并重载配置来停止详细日志；错误摘要仍保留。
+
 - `src/plugin/social/engine.mjs`：会话上下文、决策解析、调度和发送对象校验。
 - `src/plugin/social/api.mjs`：Chat Completions HTTP 请求适配。
 - `src/plugin/social/index.mjs`：与现有配置、权限和 QQ 回复函数对接。

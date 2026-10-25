@@ -1,3 +1,5 @@
+import { errorDetails } from './diagnostics.mjs';
+
 // The scheduler is independent of QQ and HTTP so timing and routing can be tested offline.
 const number = (value, fallback, min, max) =>
   Number.isFinite(value) ? Math.min(max, Math.max(min, Math.floor(value))) : fallback;
@@ -91,17 +93,19 @@ export class SocialEngine {
     request,
     send,
     allowed = () => true,
+    trace = () => {},
     log = console.error,
     now = Date.now,
     setTimer = setTimeout,
     clearTimer = clearTimeout,
   }) {
-    Object.assign(this, { getConfig, getPersona, request, send, allowed, log, now, setTimer, clearTimer });
+    Object.assign(this, { getConfig, getPersona, request, send, allowed, trace, log, now, setTimer, clearTimer });
     this.sessions = new Map();
     this.usage = { day: '', decisions: 0, replies: 0 };
   }
 
   reset() {
+    for (const state of this.sessions.values()) this.report(state, 'reset', { reason: 'config_reload' });
     for (const state of this.sessions.values()) this.clearTimer(state.timer);
     this.sessions.clear(); // In-flight results fail the identity check in valid().
   }
@@ -110,6 +114,7 @@ export class SocialEngine {
     const key = `group:${groupId}`;
     const state = this.sessions.get(key);
     if (!state) return false;
+    this.report(state, 'reset', { reason: 'admin_command' });
     this.clearTimer(state.timer);
     // Removing this exact state also invalidates pending model responses, even if
     // another message immediately creates a new session for the same group.
@@ -122,12 +127,39 @@ export class SocialEngine {
     return this.sessions.get(state.key) === state && isAllowed(state.context, config) && this.allowed(state.context);
   }
 
+  report(state, event, details = {}) {
+    this.trace(state.context, event, { revision: state.revision, ...details });
+  }
+
+  current(state, revision, stage) {
+    if (!this.valid(state)) {
+      this.report(state, 'discarded', { stage, reason: 'session_reset_or_access_changed' });
+      return false;
+    }
+    if (state.revision !== revision) {
+      this.report(state, 'discarded', { stage, reason: 'new_messages', requestRevision: revision });
+      return false;
+    }
+    return true;
+  }
+
   observe(context) {
     const config = settings(this.getConfig());
-    if (!isAllowed(context, config) || !this.allowed(context)) return false;
+    if (!isAllowed(context, config)) {
+      const reason = !config.enable ? 'disabled' : String(context.user_id) === String(context.self_id) ? 'self_message'
+        : context.message_type === 'group' ? 'group_not_enabled'
+          : context.message_type === 'private' ? 'private_user_not_enabled' : 'unsupported_conversation';
+      this.trace(context, 'filtered', { reason });
+      return false;
+    }
+    if (!this.allowed(context)) {
+      this.trace(context, 'filtered', { reason: 'access_denied' });
+      return false;
+    }
     const now = this.now();
     for (const [key, state] of this.sessions) {
       if (now - state.lastIncoming >= config.idleExpireMs) {
+        this.report(state, 'expired', { idleMs: now - state.lastIncoming });
         this.clearTimer(state.timer);
         this.sessions.delete(key);
       }
@@ -135,7 +167,10 @@ export class SocialEngine {
     const key = context.message_type === 'group' ? `group:${context.group_id}` : `private:${context.user_id}`;
     let state = this.sessions.get(key);
     if (!state) {
-      if (this.sessions.size >= config.maxSessions) return false;
+      if (this.sessions.size >= config.maxSessions) {
+        this.trace(context, 'filtered', { reason: 'max_sessions', limit: config.maxSessions });
+        return false;
+      }
       state = {
         key,
         history: [],
@@ -149,7 +184,10 @@ export class SocialEngine {
       this.sessions.set(key, state);
     }
     const messageId = context.message_id == null ? null : String(context.message_id);
-    if (messageId !== null && state.seen.has(messageId)) return true;
+    if (messageId !== null && state.seen.has(messageId)) {
+      this.trace(context, 'filtered', { reason: 'duplicate_message' });
+      return true;
+    }
     if (messageId !== null) {
       state.seen.add(messageId);
       if (state.seen.size > 200) state.seen.delete(state.seen.values().next().value);
@@ -167,8 +205,13 @@ export class SocialEngine {
       isSelf: false,
     });
     state.history = state.history.slice(-config.contextMessages);
+    this.report(state, 'observed', { historyCount: state.history.length });
+    if (state.busy) this.report(state, 'busy', { phase: state.phase, busyForMs: now - state.busySince });
     // Cancel delayed speech/wakeups when new context arrives, but don't indefinitely debounce a busy group.
-    if (state.timerKind !== 'observe') this.clearTimer(state.timer);
+    if (state.timerKind !== 'observe') {
+      if (state.timer) this.report(state, 'timer_cancelled', { kind: state.timerKind, reason: 'new_messages' });
+      this.clearTimer(state.timer);
+    }
     if (!state.busy && (state.timerKind !== 'observe' || !state.timer)) this.schedule(state, config.debounceMs, 'observe');
     return true;
   }
@@ -176,10 +219,14 @@ export class SocialEngine {
   schedule(state, delay, kind, callback = () => this.run(state)) {
     this.clearTimer(state.timer);
     state.timerKind = kind;
+    this.report(state, 'scheduled', { kind, delayMs: Math.max(0, delay) });
     state.timer = this.setTimer(() => {
       state.timer = null;
       state.timerKind = null;
-      return Promise.resolve(callback()).catch(error => this.log('[social]', error.message));
+      return Promise.resolve(callback()).catch(error => {
+        this.report(state, 'task_failed', { kind, ...errorDetails(error) });
+        this.log('[social] 定时任务失败', errorDetails(error));
+      });
     }, Math.max(0, delay));
     state.timer?.unref?.();
   }
@@ -193,35 +240,60 @@ export class SocialEngine {
 
   async run(state) {
     const config = settings(this.getConfig());
-    if (!this.valid(state) || state.busy) return;
+    if (!this.valid(state)) {
+      this.report(state, 'discarded', { stage: 'run', reason: 'session_reset_or_access_changed' });
+      return;
+    }
+    if (state.busy) {
+      this.report(state, 'busy', { phase: state.phase, busyForMs: this.now() - state.busySince });
+      return;
+    }
     if (this.now() - state.lastIncoming >= config.idleExpireMs) {
+      this.report(state, 'expired', { idleMs: this.now() - state.lastIncoming });
       this.sessions.delete(state.key);
       return;
     }
     const delay =
       Math.max(state.lastDecision + config.decisionIntervalMs, state.lastReply + config.replyIntervalMs) - this.now();
-    if (delay > 0) return this.schedule(state, delay, 'observe');
+    if (delay > 0) {
+      this.report(state, 'cooldown', { remainingMs: delay });
+      return this.schedule(state, delay, 'observe');
+    }
     const usage = this.dailyUsage();
-    if (usage.decisions >= config.dailyDecisionLimit || usage.replies >= config.dailyReplyLimit) return;
+    if (usage.decisions >= config.dailyDecisionLimit || usage.replies >= config.dailyReplyLimit) {
+      this.report(state, 'quota_reached', { ...usage, decisionLimit: config.dailyDecisionLimit, replyLimit: config.dailyReplyLimit });
+      return;
+    }
     usage.decisions++;
     state.lastDecision = this.now();
     state.busy = true;
+    state.busySince = this.now();
+    state.phase = 'persona';
     const revision = state.revision;
     const history = state.history.slice();
     try {
+      this.report(state, 'turn_started', { ...usage });
       if (this.getPersona) config.persona = await this.getPersona(config);
-      if (!this.valid(state) || state.revision !== revision) return;
+      if (!this.current(state, revision, 'persona')) return;
+      state.phase = 'request';
+      this.report(state, 'request_started', { historyCount: history.length });
       const response = await this.request(buildMessages(state, config, this.now()));
-      if (!this.valid(state) || state.revision !== revision) return;
+      this.report(state, 'request_finished', { requestRevision: revision, elapsedMs: this.now() - state.busySince });
+      if (!this.current(state, revision, 'request')) return;
+      state.phase = 'parse';
       const decision = parseDecision(response, history, config);
+      this.report(state, 'decision', { action: decision.action, delaySeconds: decision.delaySeconds });
       if (decision.action === 'wait' && state.autoTurns < config.maxAutoTurns) {
         state.autoTurns++;
         this.schedule(state, Math.max(config.decisionIntervalMs, decision.delaySeconds * 1000), 'wake');
       } else if (decision.action === 'speak') {
         this.schedule(state, decision.delaySeconds * 1000, 'send', () => this.deliver(state, decision, revision));
+      } else if (decision.action === 'wait') {
+        this.report(state, 'wake_limit', { autoTurns: state.autoTurns, limit: config.maxAutoTurns });
       }
     } catch (error) {
-      this.log('[social] 决策失败，保持沉默:', error.message);
+      this.report(state, 'decision_failed', { phase: state.phase, elapsedMs: this.now() - state.busySince, ...errorDetails(error) });
+      this.log('[social] 决策失败，保持沉默:', errorDetails(error));
     } finally {
       state.busy = false;
       if (this.valid(state) && state.revision !== revision) this.schedule(state, config.debounceMs, 'observe');
@@ -230,11 +302,16 @@ export class SocialEngine {
 
   async deliver(state, decision, revision) {
     const config = settings(this.getConfig());
-    if (!this.valid(state) || state.revision !== revision || this.now() - state.lastIncoming >= config.idleExpireMs) {
+    if (!this.current(state, revision, 'send')) return;
+    if (this.now() - state.lastIncoming >= config.idleExpireMs) {
+      this.report(state, 'expired', { stage: 'send', idleMs: this.now() - state.lastIncoming });
       return;
     }
     const usage = this.dailyUsage();
-    if (usage.replies >= config.dailyReplyLimit) return;
+    if (usage.replies >= config.dailyReplyLimit) {
+      this.report(state, 'quota_reached', { ...usage, replyLimit: config.dailyReplyLimit });
+      return;
+    }
     let message = escapeCQ(decision.text);
     if (state.context.message_type === 'group') {
       if (decision.targetUserId !== null) message = `[CQ:at,qq=${decision.targetUserId}]${message}`;
@@ -244,8 +321,17 @@ export class SocialEngine {
     usage.replies++;
     state.lastReply = this.now();
     state.busy = true;
+    state.busySince = this.now();
+    state.phase = 'send';
     try {
+      this.report(state, 'send_started', { characters: decision.text.length, replies: usage.replies });
       const result = await this.send(state.context, message);
+      this.report(state, 'send_finished', {
+        success: result?.retcode === 0,
+        retcode: typeof result?.retcode === 'number' ? result.retcode : undefined,
+        reason: !result ? 'client_not_ready_or_no_result' : undefined,
+        elapsedMs: this.now() - state.busySince,
+      });
       if (!result || result.retcode !== 0) throw new Error('QQ 消息发送失败或客户端未就绪');
       if (!this.valid(state)) return;
       state.history.push({

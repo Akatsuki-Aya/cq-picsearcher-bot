@@ -15,7 +15,7 @@ import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
 import saucenao, { snDB } from './plugin/saucenao.mjs';
 import sendSetu from './plugin/setu.mjs';
-import social, { resetSocialGroup } from './plugin/social/index.mjs';
+import social, { resetSocialGroup, socialTrace } from './plugin/social/index.mjs';
 import vits from './plugin/vits.mjs';
 import whatanime from './plugin/whatanime.mjs';
 import { loadConfig } from './setup/config.mjs';
@@ -173,66 +173,71 @@ bot.connect();
  */
 async function commonHandle(e, context) {
   const config = global.config.bot;
+  socialTrace(context, 'received');
+  const skipSocial = reason => {
+    socialTrace(context, 'upstream_handled', { reason });
+    return true;
+  };
 
   // 白名单
-  if (config.whiteGroup.size && context.group_id && !config.whiteGroup.has(context.group_id)) return true;
+  if (config.whiteGroup.size && context.group_id && !config.whiteGroup.has(context.group_id)) return skipSocial('global_group_whitelist');
 
   // 忽略自己发给自己的消息
-  if (context.user_id === context.self_id || context.user_id === context.self_tiny_id) return true;
+  if (context.user_id === context.self_id || context.user_id === context.self_tiny_id) return skipSocial('self_message');
 
   // 管理员指令
-  if (handleAdminMsg(context)) return true;
+  if (handleAdminMsg(context)) return skipSocial('admin_command');
 
   // 黑名单检测
-  if (logger.checkBan(context)) return true;
+  if (logger.checkBan(context)) return skipSocial('banned');
 
   // 语言库
-  if (corpus(context)) return true;
+  if (corpus(context)) return skipSocial('corpus');
 
   // 忽略指定正则的发言
-  if (config.regs.ignore && new RegExp(config.regs.ignore).test(context.message)) return true;
+  if (config.regs.ignore && new RegExp(config.regs.ignore).test(context.message)) return skipSocial('ignore_regexp');
 
   // 通用指令
   if (context.message === '--help') {
     replyMsg(context, 'https://yww.uy/drpg3s');
-    return true;
+    return skipSocial('help_command');
   }
   if (context.message === '--version') {
     replyMsg(context, version);
-    return true;
+    return skipSocial('version_command');
   }
   if (context.message === '--about') {
     replyMsg(context, 'https://github.com/Tsuk1ko/cq-picsearcher-bot');
-    return true;
+    return skipSocial('about_command');
   }
 
   // chatgpt
   if (global.config.bot.chatgpt.enable) {
-    if (await chatgpt(context)) return true;
+    if (await chatgpt(context)) return skipSocial('chatgpt_command');
   }
 
   // chatgpt
   if (global.config.bot.vits.enable) {
-    if (await vits(context)) return true;
+    if (await vits(context)) return skipSocial('vits');
   }
 
   // 点赞
   if (global.config.bot.like.enable) {
-    if (await like(context)) return true;
+    if (await like(context)) return skipSocial('like');
   }
 
   // reminder
   if (config.reminder.enable) {
-    if (rmdHandler(context)) return true;
+    if (rmdHandler(context)) return skipSocial('reminder');
   }
 
   // setu
   if (config.setu.enable) {
-    if (sendSetu(context)) return true;
+    if (sendSetu(context)) return skipSocial('setu');
   }
 
   // 反哔哩哔哩小程序
-  if (await bilibiliHandler(context)) return true;
+  if (await bilibiliHandler(context)) return skipSocial('bilibili');
 
   // Social mode consumes ordinary conversation only after explicit commands/plugins.
   if (social(context)) return true;
@@ -357,6 +362,7 @@ function handleAdminMsg(context) {
 async function privateAndAtMsg(e, context) {
   if (global.config.bot.debug) {
     if (!isSendByAdmin(context)) {
+      socialTrace(context, 'upstream_handled', { reason: 'debug_admin_only' });
       e.stopPropagation();
       replyMsg(context, global.config.bot.replys.debug, true);
       return;
@@ -437,6 +443,7 @@ async function privateAndAtMsg(e, context) {
 async function groupMsg(e, context) {
   if (global.config.bot.debug) {
     if (!isSendByAdmin(context)) {
+      socialTrace(context, 'upstream_handled', { reason: 'debug_admin_only' });
       e.stopPropagation();
       return;
     }
