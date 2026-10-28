@@ -21,6 +21,7 @@ export function settings(config = {}) {
     dailyDecisionLimit: number(config.dailyDecisionLimit, 200, 1, 100000),
     dailyReplyLimit: number(config.dailyReplyLimit, 50, 1, 10000),
     maxSessions: number(config.maxSessions, 100, 1, 1000),
+    jsonRetries: number(config.jsonRetries, 1, 0, 3),
   };
 }
 
@@ -275,13 +276,51 @@ export class SocialEngine {
       this.report(state, 'turn_started', { ...usage });
       if (this.getPersona) config.persona = await this.getPersona(config);
       if (!this.current(state, revision, 'persona')) return;
-      state.phase = 'request';
-      this.report(state, 'request_started', { historyCount: history.length });
-      const response = await this.request(buildMessages(state, config, this.now()));
-      this.report(state, 'request_finished', { requestRevision: revision, elapsedMs: this.now() - state.busySince });
-      if (!this.current(state, revision, 'request')) return;
-      state.phase = 'parse';
-      const decision = parseDecision(response, history, config);
+      const messages = buildMessages(state, config, this.now());
+      let decision;
+      for (let attempt = 1; attempt <= config.jsonRetries + 1; attempt++) {
+        if (!this.current(state, revision, 'retry')) return;
+        if (attempt > 1) {
+          const retryUsage = this.dailyUsage();
+          if (retryUsage.decisions >= config.dailyDecisionLimit || retryUsage.replies >= config.dailyReplyLimit) {
+            this.report(state, 'quota_reached', {
+              ...retryUsage, decisionLimit: config.dailyDecisionLimit, replyLimit: config.dailyReplyLimit, stage: 'retry',
+            });
+            return;
+          }
+          retryUsage.decisions++;
+          state.lastDecision = this.now();
+          this.report(state, 'json_retry', { attempt, maxAttempts: config.jsonRetries + 1 });
+        }
+        state.phase = 'request';
+        const started = this.now();
+        this.report(state, 'request_started', { historyCount: history.length, attempt });
+        const response = await this.request(attempt === 1 ? messages : [
+          ...messages,
+          {
+            role: 'user',
+            content: '上一次返回无法解析为 JSON。请重新判断并仅输出一个完整合法的 JSON 对象，严格使用系统规定的字段。不要添加说明、思考过程或 Markdown；字符串中的双引号、换行须正确转义。',
+          },
+        ]);
+        this.report(state, 'request_finished', { requestRevision: revision, attempt, elapsedMs: this.now() - started });
+        if (!this.current(state, revision, 'request')) return;
+        state.phase = 'parse';
+        try {
+          decision = parseDecision(response, history, config);
+          break;
+        } catch (error) {
+          const retryable = error instanceof SyntaxError;
+          this.report(state, 'response_invalid', { attempt, retryable, ...errorDetails(error) });
+          if (config.logFailedResponses !== false) {
+            // JSON encoding keeps multiline/model-controlled content in a single log record.
+            this.log('[social] model_response_error', JSON.stringify({
+              time: new Date(this.now()).toISOString(), session: state.key, requestRevision: revision,
+              attempt, ...errorDetails(error), response,
+            }));
+          }
+          if (!retryable || attempt > config.jsonRetries) throw error;
+        }
+      }
       this.report(state, 'decision', { action: decision.action, delaySeconds: decision.delaySeconds });
       if (decision.action === 'wait' && state.autoTurns < config.maxAutoTurns) {
         state.autoTurns++;

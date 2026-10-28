@@ -74,6 +74,8 @@
 | `decisionIntervalMs` | 15000 | 同会话两次模型请求最小间隔 |
 | `replyIntervalMs` | 30000 | 同会话发言尝试后的冷却时间 |
 | `requestTimeoutMs` | 60000 | 模型请求超时 |
+| `jsonRetries` | 1 | JSON 语法错误后额外调用次数，0 关闭，最多 3 次 |
+| `logFailedResponses` | true | 决策解析或校验失败时，在错误日志记录模型原始返回 |
 | `maxWaitSeconds` | 300 | 模型单次等待/延迟发送的最大秒数 |
 | `maxAutoTurns` | 2 | 没有新消息时最多自动重新判断次数；0 关闭自动唤醒 |
 | `idleExpireMs` | 600000 | 距最后一条人类消息多久后停止唤醒/发送 |
@@ -102,7 +104,11 @@
 
 `bot.chatgpt.social.diagnostics` 默认 `true`，独立于 `bot.debug`。**不要为查看社交日志开启 `bot.debug`**，后者会限制仅处理管理员消息，并可能输出聊天原文。
 
-更新代码后需重启机器人。PM2 部署可运行 `pm2 logs cqps --lines 200` 查看（进程名以 `ecosystem.config.js` 为准）；前台运行则直接看终端输出。诊断行格式为 `[social] {JSON}`，包含 UTC 时间 `time`、`session`（如 `group:群号`）、消息 ID 和事件。可按 `[social]` 和对应群号筛选。日志包含群号或私聊账号，分享日志前可替换这些 ID；不记录聊天正文、人设全文、模型回复或 API Key，也不记录接口返回的原始错误文本。
+更新代码后需重启机器人。PM2 部署可运行 `npm run log -- --lines 200` 查看；前台运行则直接看终端输出。诊断行格式为 `[social] {JSON}`，包含 UTC 时间 `time`、`session`（如 `group:群号`）、消息 ID 和事件。可按 `[social]` 和对应群号筛选。普通诊断不记录聊天正文、人设全文、模型回复、API Key 或接口原始错误文本。解析失败的模型返回按下述单独开关记录。
+
+JSON 语法解析失败时，错误摘要会明确显示 `reason: invalid_json`。默认额外调用模型一次，并附加 JSON 格式纠正提示；首次加重试共最多两次。重试立即进行，不等待普通会话的决策间隔，每次调用都计入全局每日决策额度。额度不足、新消息到达或会话被清除时停止旧回合；请求网络错误和伪造目标/引用等校验错误不触发 JSON 重试。
+
+决策解析或校验失败时，`logs/error.log` 中记录 `[social] model_response_error`，包含 `session`、`requestRevision`、`attempt`、错误类型以及 `response` 原文。原文通过 JSON 转义写入单条记录，不会发送到群聊，也不会连同请求头或请求体一起记录。原文可能包含模型复述的聊天信息，分享前请检查。成功结果不记录原文。设置 `logFailedResponses: false` 可以关闭该记录；它独立于 `diagnostics` 开关。
 
 | event / reason | 表示什么 |
 | --- | --- |
@@ -119,6 +125,7 @@
 | `quota_reached` | 达到全局每日额度，显示当天 `decisions/replies` 和对应上限；不是模型选择沉默 |
 | `busy` | 正等待任务返回；`phase=request` 为模型请求，`phase=send` 为 QQ 发送，`busyForMs` 为忙碌时长 |
 | `decision_failed` | API / 决策解析失败；看 `phase`、`httpStatus`、`code`、`reason`，例如 `unknown_quote` 为模型引用了不存在的消息 |
+| `response_invalid` / `json_retry` | 本次输出解析/校验失败，或正在重新调用模型纠正 JSON；`attempt` 从 1 开始，2 为首次重试 |
 | `send_started` / `send_finished` | QQ 发送开始/返回；看 `success` 和数值 `retcode`，没有返回则只看到开始日志 |
 | `task_failed` | 定时任务或 QQ 发送异常；保留安全的错误类型/错误码，不输出原始错误内容 |
 | `wake_limit` / `expired` / `reset` | 自动唤醒次数耗尽、会话空闲过期，或管理员/重载清除会话 |
