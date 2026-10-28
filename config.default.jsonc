@@ -367,6 +367,10 @@
         "enable": true,
         // 社交诊断日志（独立于 bot.debug）：记录过滤原因、模型动作、调度和发送结果，不记录聊天正文或密钥
         "diagnostics": true,
+        // JSON 语法错误时重新调用模型的次数（不含首次，0 关闭，最多 3 次）；每次均计入每日决策额度
+        "jsonRetries": 1,
+        // 决策解析/校验失败时在错误日志记录模型返回原文，可能包含聊天内容；不记录请求或密钥
+        "logFailedResponses": true,
         // 明确开启的 QQ 群、私聊 QQ 号；空数组表示不启用任何会话
         "groups": [],
         "privateUsers": [],

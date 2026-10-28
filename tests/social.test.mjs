@@ -207,7 +207,7 @@ test('global decision and reply budgets apply across conversations', async () =>
 
 test('timeout or invalid model output stays silent without automatic retry storms', async () => {
   for (const request of [() => { throw new Error('timeout'); }, () => 'invalid']) {
-    const h = harness({ request });
+    const h = harness({ request, config: { jsonRetries: 0, logFailedResponses: false } });
     h.engine.observe(context());
     await h.next();
     assert.equal(h.sent.length, 0);
@@ -478,4 +478,87 @@ test('diagnostic output can be disabled independently and carries only correlati
   assert.equal(record.messageId, '1');
   assert.equal(record.event, 'received');
   assert.equal(JSON.stringify(output).includes('SECRET'), false);
+});
+
+test('invalid JSON logs the model result and retries with format correction before sending', async () => {
+  let count = 0;
+  const broken = '我在呢\n{"action":"speak"';
+  const h = harness({ request: () => ++count === 1 ? broken : speak() });
+  h.engine.observe(context());
+  await h.next();
+  await h.next();
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.engine.usage.decisions, 2);
+  assert.equal(h.sent.length, 1);
+  assert.match(h.calls[1].at(-1).content, /完整合法的 JSON/);
+  assert.equal(h.errors.length, 1);
+  const logged = JSON.parse(h.errors[0][1]);
+  assert.equal(logged.response, broken);
+  assert.equal(logged.reason, 'invalid_json');
+  assert.equal(logged.attempt, 1);
+  assert.ok(h.traces.some(t => t.event === 'json_retry' && t.attempt === 2));
+});
+
+test('JSON retries are bounded and every invalid response is logged', async () => {
+  const h = harness({ config: { jsonRetries: 2 }, request: () => '{broken' });
+  h.engine.observe(context());
+  await h.next();
+  assert.equal(h.calls.length, 3);
+  assert.equal(h.errors.filter(args => args[0] === '[social] model_response_error').length, 3);
+  assert.equal(h.sent.length, 0);
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.engine.sessions.get('group:100').busy, false);
+});
+
+test('retry respects global quotas and can disable raw response logging separately', async () => {
+  const h = harness({ config: { dailyDecisionLimit: 1, logFailedResponses: false }, request: () => 'invalid' });
+  h.engine.observe(context());
+  await h.next();
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.errors.length, 0);
+  assert.ok(h.traces.some(t => t.event === 'quota_reached' && t.stage === 'retry'));
+});
+
+test('new messages invalidate an in-flight format retry and keep the new input queued', async () => {
+  let count = 0;
+  let resolve;
+  let started;
+  const retryStarted = new Promise(done => { started = done; });
+  const h = harness({ request: () => {
+    if (++count === 1) return 'invalid';
+    started();
+    return new Promise(done => { resolve = done; });
+  } });
+  h.engine.observe(context());
+  const pending = h.next();
+  await retryStarted;
+  h.engine.observe(context({ message_id: 2, message: '新话题' }));
+  resolve(speak());
+  await pending;
+  assert.equal(h.sent.length, 0);
+  assert.equal(h.timers.size, 1);
+  assert.ok(h.traces.some(t => t.event === 'discarded' && t.reason === 'new_messages'));
+});
+
+test('reset before a malformed result returns prevents retries', async () => {
+  let resolve;
+  const h = harness({ request: () => new Promise(done => { resolve = done; }) });
+  h.engine.observe(context());
+  const pending = h.next();
+  h.engine.resetGroup(100);
+  resolve('invalid');
+  await pending;
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.timers.size, 0);
+});
+
+test('semantic validation failures log the result without retrying or sending it', async () => {
+  const response = speak({ targetUserId: '777' });
+  const h = harness({ request: () => response });
+  h.engine.observe(context());
+  await h.next();
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.sent.length, 0);
+  assert.equal(JSON.parse(h.errors[0][1]).response, response);
+  assert.ok(h.traces.some(t => t.event === 'response_invalid' && t.reason === 'unknown_target' && !t.retryable));
 });

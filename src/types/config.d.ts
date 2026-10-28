@@ -112,6 +112,8 @@ declare interface Chatgpt {
 declare interface Social {
     enable: boolean;
     diagnostics: boolean;
+    jsonRetries: number;
+    logFailedResponses: boolean;
     groups: (number | string)[];
     privateUsers: (number | string)[];
     personaFile: string;

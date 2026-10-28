@@ -11,7 +11,8 @@ export function errorDetails(error) {
     'QQ 消息发送失败或客户端未就绪': 'qq_send_failed',
   };
   return {
-    reason: Object.hasOwn(reasons, error?.message) ? reasons[error.message] : undefined,
+    reason: error instanceof SyntaxError ? 'invalid_json'
+      : Object.hasOwn(reasons, error?.message) ? reasons[error.message] : undefined,
     errorType: ['SyntaxError', 'TypeError', 'AxiosError', 'Error'].includes(error?.name) ? error.name : 'Error',
     code: ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'ENOTFOUND', 'ERR_BAD_REQUEST', 'ERR_BAD_RESPONSE'].includes(error?.code)
       ? error.code : undefined,
