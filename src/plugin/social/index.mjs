@@ -1,3 +1,4 @@
+import { requestWeb } from './web.mjs';
 import AxiosProxy from '../../utils/axiosProxy.mjs';
 import emitter from '../../utils/emitter.mjs';
 import logger from '../../utils/logger.mjs';
@@ -14,6 +15,7 @@ const engine = new SocialEngine({
   trace: socialTrace,
   getConfig: () => global.config.bot.chatgpt.social,
   getPersona: loadPersona,
+  webRequest: (decision, config) => requestWeb(AxiosProxy.post, config, decision),
   request: messages =>
     requestDecision(AxiosProxy.post, global.config.bot.chatgpt, global.config.bot.chatgpt.social, messages),
   send: (context, message) => global.replyMsg(context, message),

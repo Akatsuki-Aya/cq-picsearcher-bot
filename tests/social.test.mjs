@@ -28,6 +28,7 @@ function harness(options = {}) {
   const engine = new SocialEngine({
     getConfig: () => config,
     getPersona: options.getPersona,
+    webRequest: options.webRequest,
     request: async messages => {
       calls.push(messages);
       return options.request ? options.request(messages) : silent;
@@ -562,3 +563,49 @@ test('semantic validation failures log the result without retrying or sending it
   assert.equal(JSON.parse(h.errors[0][1]).response, response);
   assert.ok(h.traces.some(t => t.event === 'response_invalid' && t.reason === 'unknown_target' && !t.retryable));
 });
+
+ test('web search then fetch supplies bounded evidence before speech', async () => {
+  const actions = [JSON.stringify({action:'search', query:'游戏更新'}), JSON.stringify({action:'fetch', url:'https://example.com/news'}), speak()];
+  const used = [];
+  const h = harness({ config: { web: {enable:true} }, request: async () => actions.shift(),
+    webRequest: async d => { used.push(d.action); return {content:'外部资料'}; } });
+  h.engine.observe(context()); await h.next(); await h.next();
+  assert.deepEqual(used, ['search', 'fetch']);
+  assert.equal(h.sent.length, 1);
+  assert.equal(h.engine.dailyUsage().decisions, 3);
+  assert.equal(h.engine.dailyUsage().webCalls, 2);
+  assert.match(JSON.stringify(h.calls[2]), /externalWebData/);
+ });
+ test('web results arriving after new input or reset never trigger an obsolete answer', async () => {
+  for (const reset of [false, true]) {
+    let resolve;
+    const h = harness({config:{web:{enable:true}}, request:async()=>JSON.stringify({action:'search',query:'test'}),
+      webRequest:()=>new Promise(r=>{resolve=r;})});
+    h.engine.observe(context()); const running=h.next();
+    while (!resolve) await Promise.resolve();
+    if (reset) h.engine.resetGroup(100); else h.engine.observe(context({message_id:2}));
+    resolve({results:[]}); await running;
+    assert.equal(h.calls.length,1); assert.equal(h.sent.length,0);
+  }
+ });
+ test('web loop and daily quotas bound tool calls; tool failures allow a final decision', async () => {
+  for (const mode of ['loop','quota','failure']) {
+    let count=0;
+    const h=harness({config:{web:{enable:true,maxCallsPerTurn:2,dailyLimit:1}},
+      request:async()=>mode==='failure' && count ? silent : JSON.stringify({action:'search',query:'test'}),
+      webRequest:async()=>{count++; if(mode==='failure') throw new Error('secret'); return {results:[]};}});
+    h.engine.observe(context()); await h.next();
+    assert.equal(count,1); assert.ok(h.calls.length<=3); assert.equal(h.sent.length,0);
+  }
+ });
+ test('web adapter uses only the dedicated key and clips external content', async () => {
+  const {requestWeb}=await import('../src/plugin/social/web.mjs');
+  const result=await requestWeb(async(url,body,opts)=>{
+    assert.equal(url,'https://api.deepseek.com/v1/tools/fetch');
+    assert.equal(opts.headers.Authorization,'Bearer dedicated');
+    return {data:{content:'x'.repeat(20000)}};
+  },{enable:true,apiKey:'dedicated'},{action:'fetch',url:'https://example.com'});
+  assert.equal(result.content.length,12000);
+  assert.throws(()=>parseDecision('{"action":"search","query":"x"}',[],settings({})),/未启用/);
+  assert.throws(()=>parseDecision('{"action":"fetch","url":"file:///etc/passwd"}',[],settings({web:{enable:true}})));
+ });

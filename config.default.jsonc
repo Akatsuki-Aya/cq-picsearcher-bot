@@ -364,6 +364,13 @@
       "customChatAPI": "",
       // AI 社交仿真：独立于上面的 enable，复用 apiKey/model/customChatAPI；仅支持 Chat Completions 格式
       "social": {
+        // DeepSeek 独立搜索/抓取 API；不自动复用其他模型服务商的密钥
+        "web": {
+          "enable": false,
+          "apiKey": "",
+          "maxCallsPerTurn": 2,
+          "dailyLimit": 100
+        },
         "enable": true,
         // 社交诊断日志（独立于 bot.debug）：记录过滤原因、模型动作、调度和发送结果，不记录聊天正文或密钥
         "diagnostics": true,
