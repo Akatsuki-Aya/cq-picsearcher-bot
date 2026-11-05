@@ -364,6 +364,8 @@
       "customChatAPI": "",
       // AI 社交仿真：独立于上面的 enable，复用 apiKey/model/customChatAPI；仅支持 Chat Completions 格式
       "social": {
+        // 按群保存称呼到 data/social-members/群号.json，重置聊天不删除；可手动维护
+        "memberMemory": true,
         // DeepSeek 独立搜索/抓取 API；不自动复用其他模型服务商的密钥
         "web": {
           "enable": false,

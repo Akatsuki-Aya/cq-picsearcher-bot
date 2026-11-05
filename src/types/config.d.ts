@@ -110,6 +110,7 @@ declare interface Chatgpt {
 }
 
 declare interface Social {
+    memberMemory: boolean;
     web: { enable: boolean; apiKey: string; maxCallsPerTurn: number; dailyLimit: number };
     enable: boolean;
     diagnostics: boolean;

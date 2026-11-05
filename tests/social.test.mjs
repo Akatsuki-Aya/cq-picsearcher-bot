@@ -29,6 +29,7 @@ function harness(options = {}) {
     getConfig: () => config,
     getPersona: options.getPersona,
     webRequest: options.webRequest,
+    memberStore: options.memberStore,
     request: async messages => {
       calls.push(messages);
       return options.request ? options.request(messages) : silent;
@@ -609,3 +610,38 @@ test('semantic validation failures log the result without retrying or sending it
   assert.throws(()=>parseDecision('{"action":"search","query":"x"}',[],settings({})),/未启用/);
   assert.throws(()=>parseDecision('{"action":"fetch","url":"file:///etc/passwd"}',[],settings({web:{enable:true}})));
  });
+
+test('member aliases survive reset and store recreation, remain group isolated and respect manual locks', async () => {
+  const { MemberStore } = await import('../src/plugin/social/members.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'social-members-'));
+  try {
+    const store = new MemberStore(dir);
+    const h = harness({memberStore:store, request:async()=>JSON.stringify({action:'silent',
+      memberUpdates:[{userId:'123',aliases:['小鱼','编造的名字'],messageId:'1'}]})});
+    h.engine.observe(context({message:'叫我小鱼'})); await h.next();
+    assert.deepEqual(store.read(100), [{userId:'123',aliases:['小鱼']}]);
+    assert.deepEqual(store.read(200), []);
+    h.engine.resetGroup(100);
+    const restarted = new MemberStore(dir);
+    const h2 = harness({memberStore:restarted});
+    h2.engine.observe(context({message_id:2})); await h2.next();
+    assert.deepEqual(JSON.parse(h2.calls[0][1].content).knownMembers,[{userId:'123',aliases:['小鱼']}]);
+    await writeFile(join(dir,'100.json'), JSON.stringify({'123':{aliases:['手动名字'],locked:true}}));
+    store.save(100,[{userId:'123',aliases:['小鱼'],messageId:'1'}],[{userId:'123',messageId:'1',text:'小鱼',name:'小明'}]);
+    assert.deepEqual(store.read(100),[{userId:'123',aliases:['手动名字']}]);
+    await writeFile(join(dir,'100.json'), '{broken');
+    assert.throws(()=>store.save(100,[],[]));
+  } finally { await rm(dir,{recursive:true,force:true}); }
+});
+
+test('stale model output cannot persist member aliases', async () => {
+  let resolve;
+  let saves=0;
+  const h=harness({memberStore:{read:()=>[],save:()=>{saves++;}},request:()=>new Promise(r=>{resolve=r;})});
+  h.engine.observe(context()); const running=h.next();
+  while (!resolve) await Promise.resolve();
+  h.engine.resetGroup(100);
+  resolve(JSON.stringify({action:'silent',memberUpdates:[{userId:'123',aliases:['小鱼'],messageId:'1'}]}));
+  await running;
+  assert.equal(saves,0);
+});
