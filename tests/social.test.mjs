@@ -645,3 +645,22 @@ test('stale model output cannot persist member aliases', async () => {
   await running;
   assert.equal(saves,0);
 });
+
+test('mixed text and meme images reach the model as visual attachments', async () => {
+  const h = harness();
+  h.engine.observe(context({ message: '看看[CQ:image,file=x,url=https://example.com/a?x=1&amp;y=2,summary=动画表情]好笑吗[CQ:face,id=14]' }));
+  await h.next();
+  const parts = h.calls[0][1].content;
+  assert.ok(Array.isArray(parts));
+  const history = JSON.parse(parts[0].text).messages;
+  assert.match(history[0].text, /看看\[图片1：动画表情\]好笑吗\[表情：14\]/);
+  assert.equal(parts[2].image_url.url, 'https://example.com/a?x=1&y=2');
+  assert.equal(history[0].images, undefined);
+});
+
+test('image-only input works and unavailable images remain explicit', async () => {
+  const h = harness();
+  h.engine.observe(context({ message: '[CQ:image,file=local.jpg]' }));
+  await h.next();
+  assert.match(JSON.parse(h.calls[0][1].content).messages[0].text, /未提供/);
+});

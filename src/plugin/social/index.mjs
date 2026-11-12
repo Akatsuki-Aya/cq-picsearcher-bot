@@ -1,3 +1,4 @@
+import { parseSocialMessage } from './media.mjs';
 import { MemberStore } from './members.mjs';
 import { requestWeb } from './web.mjs';
 import AxiosProxy from '../../utils/axiosProxy.mjs';
@@ -59,10 +60,11 @@ export default context => {
     socialTrace(context, 'filtered', { reason });
     return false;
   };
-  // Leave image search, commands and non-text media to the existing handlers.
+  // Explicit commands and unsupported media remain with existing handlers.
   if (typeof message !== 'string' || !message.trim()) return skip('empty_text');
-  if (message.includes('--')) return skip('command');
-  if (/\[CQ:(?!at,|reply,)/.test(message)) return skip('non_text_cq');
+  const media = parseSocialMessage(message);
+  if (media.text.includes('--')) return skip('command');
+  if (!media.supported) return skip('non_text_cq');
   if (/^(all|pixiv|danbooru|doujin|book|anime|原图)$/.test(message)) return skip('search_command');
   const { regs } = global.config.bot;
   if ([regs.searchModeOn, regs.searchModeOff].some(regexp => regexp && new RegExp(regexp).test(message))) return skip('search_command');
